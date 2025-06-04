@@ -1,4 +1,0 @@
-numpy 1.26.4
-numba 0.59.0
-llvmlite 0.42.0 
-umap-learn 0.5.7
