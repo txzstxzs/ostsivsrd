@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from utils.util import calc_diffusion_step_embedding
 
 
-'Diffwave架构 和sssd的区别在于加入扩散步嵌入后的操作略有不同 这里用dilated卷积'
+
 
 
 def swish(x):

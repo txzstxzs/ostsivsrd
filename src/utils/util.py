@@ -86,7 +86,7 @@ def calc_diffusion_step_embedding(diffusion_steps, diffusion_step_embed_dim_in):
 
     return diffusion_step_embed
 
-'计算具体的beta alpha等值'
+
 def calc_diffusion_hyperparams(T, beta_0, beta_T):
     """
     Compute diffusion process hyperparameters
@@ -120,7 +120,7 @@ def calc_diffusion_hyperparams(T, beta_0, beta_T):
 
 
 
-'基本就是ddpm里的逆向采样 缺失处为随机噪声 逐步对缺失处减噪  多了监督条件 已有值和掩码拼接作为监督'
+
 def sampling(net, size, diffusion_hyperparams, cond, mask, only_generate_missing=0, guidance_weight=0):
     """
     Perform the complete sampling step according to p(x_0|x_T) = \prod_{t=1}^T p_{\theta}(x_{t-1}|x_t)
@@ -145,33 +145,31 @@ def sampling(net, size, diffusion_hyperparams, cond, mask, only_generate_missing
 
     print('begin sampling, total number of reverse steps = %s' % T)
 
-    x = std_normal(size)      # xT  shape为 [采样数, 14 ,100]
+    x = std_normal(size)      
 
     with torch.no_grad(): 
         
-        for t in range(T - 1, -1, -1):                       # 开始减噪
+        for t in range(T - 1, -1, -1):                      
             
             if only_generate_missing == 1:
-                x = x * (1 - mask).float() + cond * mask.float()   # 开始时缺失处填噪声 cond是原数据 和训练时一样  看training_loss模块  
-                                                   # 每一次迭代 缺失处替换为上一步的减噪结果
-                                                   # 也就是逐步对缺失处减噪
+                x = x * (1 - mask).float() + cond * mask.float()   
+                                                   
                 
             diffusion_steps = (t * torch.ones((size[0], 1))).cuda()  # use the corresponding reverse step
             
             epsilon_theta = net((x, cond, mask, diffusion_steps,))  # predict \epsilon according to \epsilon_\theta
             
-            # 计算xt-1 update x_{t-1} to \mu_\theta(x_t)
+            
             x = (x - (1 - Alpha[t]) / torch.sqrt(1 - Alpha_bar[t]) * epsilon_theta) / torch.sqrt(Alpha[t])
             
             if t > 0:
-                x = x + Sigma[t] * std_normal(size)  # x0不加标准差  add the variance term to x_{t-1}
+                x = x + Sigma[t] * std_normal(size)  
 
     return x
 
 
 
-'这里基本上是一个ddpm的加噪和预测噪声的过程 多了监督条件 缺失掩码'
-'only_generate_missing为加噪方式 1是局部加噪 0是全局加噪'
+
 def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=1):
     """
     Compute the training loss of epsilon and epsilon_theta
@@ -190,34 +188,29 @@ def training_loss(net, loss_fn, X, diffusion_hyperparams, only_generate_missing=
     _dh = diffusion_hyperparams
     T, Alpha_bar = _dh["T"], _dh["Alpha_bar"]
 
-    audio = X[0]      # 原数据
-    cond = X[1]       # 也是原数据 但会乘以掩码再和掩码拼接 作为监督  其实这两个原数据用一个就行
-    mask = X[2]       # 01掩码   1保留 0缺失
-    loss_mask = X[3]    # bool掩码 用于计算损失  true为缺失 false为保留
+    audio = X[0]      
+    cond = X[1]      
+    mask = X[2]       
+    loss_mask = X[3]   
 
     B, C, L = audio.shape                           # B is batchsize, C=1, L is audio length    [50, 14, 100]
 #     print('audio cond', audio.shape, cond.shape)           # [50, 14, 100]  [50, 14, 100]
     
-    diffusion_steps = torch.randint(T, size=(B, 1, 1)).cuda()  #  随机扩散步加噪 randomly sample diffusion steps from 1~T 
+    diffusion_steps = torch.randint(T, size=(B, 1, 1)).cuda()  
 
     z = std_normal(audio.shape)
     
-#     if only_generate_missing == 1:                     # mask的1为保留 0为缺失 
-#         z = audio * mask.float() + z * (1 - mask).float()    # 只对缺失处加噪 保留处不变  采样时也是这样 缺失处为噪声 看sampling模块
-        
-                                             # x0到xt 前向加噪 只对缺失处加噪  
+
     transformed_X = torch.sqrt(Alpha_bar[diffusion_steps]) * audio + torch.sqrt(1 - Alpha_bar[diffusion_steps]) * z    
                                             
     
-    epsilon_theta = net( (transformed_X, cond, mask, diffusion_steps.view(B, 1),) )  # 预测噪声 predict \epsilon according to \epsilon_\theta 
+    epsilon_theta = net( (transformed_X, cond, mask, diffusion_steps.view(B, 1),) ) 
 
-#     if only_generate_missing == 1:         # 计算缺失处的噪声损失 对应掩码为true 所以要用掩码标出计算损失的位置
-#         return loss_fn(epsilon_theta[loss_mask], z[loss_mask])
-#     elif only_generate_missing == 0:        # 全局加噪 所以不用加掩码
+
     return loss_fn(epsilon_theta, z)
 
 
-'mcar缺失场景 和下面三个缺失方法的输入参数不一样 这里直接输入缺失率即可'
+
 def get_mask_mcar(sample, mr): 
     mask = torch.ones(sample.shape).view(1,-1) 
     index = torch.tensor(range(mask.shape[1]))  
@@ -229,27 +222,24 @@ def get_mask_mcar(sample, mr):
 
 
 
-    
-'下面为获取三种类型的掩码'
-'都是按列缺失 k为每列缺失的个数'
-def get_mask_rm(sample, k):   # 随机缺失  输入为一个样本方块 [100, 14]  k为20 是每一列数据要缺失的数据个数  每一列缺失的个数都一样 有随机性  缺失率为20/100=0.2 
-                     # 这个其实还不算mcar的完全随机缺失 因为这里每一列都要缺失相同的个数
+   
+def get_mask_rm(sample, k):   
     """Get mask of random points (missing at random) across channels based on k,
     where k == number of data points. Mask of sample's shape where 0's to be imputed, and 1's to preserved
     as per ts imputers"""
 
-    mask = torch.ones(sample.shape)          # [100, 14]  
-    length_index = torch.tensor(range(mask.shape[0]))    # 0-100 序列程度 时间步长度  lenght of series indexes
+    mask = torch.ones(sample.shape)          
+    length_index = torch.tensor(range(mask.shape[0]))    
     
-    for channel in range(mask.shape[1]):             # 对于每一列  一列一列缺失
-        perm = torch.randperm(len(length_index))      # 0-100打乱
-        idx = perm[0:k]                       # 取前20个
-        mask[:, channel][idx] = 0                # 对于每一列 随机20行为0  原有100行 所以缺失率为0.2
+    for channel in range(mask.shape[1]):             
+        perm = torch.randperm(len(length_index))     
+        idx = perm[0:k]                      
+        mask[:, channel][idx] = 0                
 
     return mask
 
 
-def get_mask_mnr(sample, k):  # 缺失的时候是连续k个点一起缺失 不那么随机 
+def get_mask_mnr(sample, k):  
     """Get mask of random segments (non-missing at random) across channels based on k,
     where k == number of segments. Mask of sample's shape where 0's to be imputed, and 1's to preserved
     as per ts imputers"""
@@ -264,7 +254,7 @@ def get_mask_mnr(sample, k):  # 缺失的时候是连续k个点一起缺失 不�
     return mask
 
 
-def get_mask_bm(sample, k):  # 和上面的类似 也是连续缺失 而且每一列的缺失情况都一样 也就是块缺失
+def get_mask_bm(sample, k):  
     """Get mask of same segments (black-out missing) across channels based on k,
     where k == number of segments. Mask of sample's shape where 0's to be imputed, and 1's to be preserved
     as per ts imputers"""
